@@ -1,0 +1,7 @@
+# config/queries.yml
+reports:
+  - name: "war-art"
+    search: "war"
+    fields: ["id", "title", "artist_title", "date_display"]
+    max_items: 25
+    recipients: ["team@example.com"]
