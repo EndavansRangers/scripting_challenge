@@ -4,4 +4,10 @@ reports:
     search: "war"
     fields: ["id", "title", "artist_title", "date_display"]
     max_items: 25
-    recipients: ["team@example.com"]
+    recipients: ["art-team@example.com"]
+
+  - name: "impressionism-sample"
+    search: "impressionism"
+    fields: ["id", "title", "artist_title", "date_display"]
+    max_items: 10
+    recipients: ["stakeholders@example.com"]
