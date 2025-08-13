@@ -1,0 +1,3 @@
+# requirements.txt (se fijan versiones mañana)
+pyyaml
+jinja2
