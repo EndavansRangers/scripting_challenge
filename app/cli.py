@@ -1,114 +1,135 @@
-# app/cli.py
+
 import argparse
 import json
 import os
 import sys
 from datetime import datetime
-from .generate import synthetic_items, render_html_placeholder
+from typing import Any, Dict, List
 
-def _do_run(config_path: str, out_dir: str, dry_run: bool) -> int:
-    # Diagnóstico básico
-    print(f"[cli] cwd={os.getcwd()}")
-    print(f"[cli] config={config_path} | out={out_dir} | dry_run={dry_run}")
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-    # En el stub aún no leemos YAML real; usamos 2 reportes fijos.
-    reports = [
-        {
-            "name": "war-art",
-            "search": "war",
-            "fields": ["id", "title", "artist_title", "date_display"],
-            "max_items": 25,
-        },
-        {
-            "name": "impressionism-sample",
-            "search": "impressionism",
-            "fields": ["id", "title", "artist_title", "date_display"],
-            "max_items": 10,
-        },
-    ]
+# Importa tu lógica real de datos
+from .script import load_config, fetch_artworks
 
-    # Crear carpeta de salida
+def render_html(template_dir: str, template_name: str, context: Dict[str, Any]) -> str:
+    env = Environment(
+        loader=FileSystemLoader(template_dir),
+        autoescape=select_autoescape(enabled_extensions=("html",))
+    )
+    tpl = env.get_template(template_name)
+    return tpl.render(**context)
+
+def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> int:
+    print(f"[cli] config={config_path} | out={out_dir} | dry_run={dry_run} | strict={strict}")
     os.makedirs(out_dir, exist_ok=True)
 
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:
+        print(f"[error] Cargando YAML: {e}", file=sys.stderr)
+        return 1
+
+    reports: List[Dict[str, Any]] = cfg.get("reports", [])
+    if not reports:
+        print("[warn] No hay reports en el YAML", file=sys.stderr)
+        return 0
+
     summary = []
+    error_count = 0
+
     for r in reports:
-        items = synthetic_items(r["fields"], r["max_items"])
+        # Validación mínima
+        for k in ("name", "search", "fields", "max_items"):
+            if k not in r:
+                print(f"[warn] Reporte inválido, falta '{k}': {r}", file=sys.stderr)
+                error_count += 1
+                break
+        else:
+            name: str = r["name"]
+            search: str = r["search"]
+            fields: List[str] = r["fields"]
+            max_items: int = int(r["max_items"])
 
-        # JSON “raw”
-        json_path = os.path.join(out_dir, f"{r['name']}.json")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
-        print(f"[cli] wrote {json_path}")
+            print(f"[cli] fetching: name={name} q='{search}' fields={fields} max_items={max_items}")
+            try:
+                items = fetch_artworks(search=search, fields=fields, max_items=max_items)
+            except Exception as e:
+                print(f"[error] Reporte '{name}': {e}", file=sys.stderr)
+                error_count += 1
+                continue
 
-        # HTML placeholder (simula render con plantilla)
-        html = render_html_placeholder(
-            report_name=r["name"],
-            search=r["search"],
-            fields=r["fields"],
-            items=items,
-            generated_at=datetime.utcnow().isoformat() + "Z",
-            max_items=r["max_items"],
-        )
-        html_path = os.path.join(out_dir, f"{r['name']}.html")
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html)
-        print(f"[cli] wrote {html_path}")
+            # 1) JSON real
+            json_path = os.path.join(out_dir, f"{name}.json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=2)
+            print(f"[cli] wrote {json_path}")
 
-        # “PDF” placeholder (mínimo para existir como artefacto)
-        pdf_path = os.path.join(out_dir, f"{r['name']}.pdf")
-        with open(pdf_path, "wb") as f:
-            f.write(b"%PDF-1.4\n% placeholder preview\n%%EOF\n")
-        print(f"[cli] wrote {pdf_path}")
+            # 2) HTML real (Jinja2) usando templates/report.html
+            context = {
+                "report_name": name,
+                "search": search,
+                "fields": fields,
+                "items": items,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "max_items": max_items,
+            }
+            html = render_html(template_dir="templates", template_name="report.html", context=context)
+            html_path = os.path.join(out_dir, f"{name}.html")
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            print(f"[cli] wrote {html_path}")
 
-        summary.append({"report": r["name"], "count": len(items)})
+            # 3) PDF placeholder (mantiene el artefacto .pdf hasta integrar renderer real)
+            pdf_path = os.path.join(out_dir, f"{name}.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(b"%PDF-1.4\n% placeholder (render real pendiente)\n%%EOF\n")
+            print(f"[cli] wrote {pdf_path}")
 
-    # Guardar pequeño resumen
+            summary.append({"report": name, "count": len(items)})
+
+    # Resumen global para el Job Summary
     summary_path = os.path.join(out_dir, "summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     print(f"[cli] wrote {summary_path}")
 
-    if dry_run:
-        print("[cli] Dry-run complete. Artifacts are ready.")
+    # Política de salida:
+    # - preview (dry-run): no falles el build salvo errores “duros” (carga YAML).
+    # - nightly strict: si strict=True y hubo errores de reportes, sal con código != 0
+    if strict and error_count > 0:
+        print(f"[cli] strict mode: {error_count} errores en reports", file=sys.stderr)
+        return 2
+
     return 0
 
 def main():
-    # Soporta:
-    #   python -m app --config ... --out ... --dry-run
-    #   python -m app run --config ... --out ... --dry-run
-    parser = argparse.ArgumentParser(prog="app", description="Reports-as-code CLI (stub)")
-    subparsers = parser.add_subparsers(dest="command")
+    p = argparse.ArgumentParser(description="Reports-as-code CLI (API real + HTML con Jinja2)")
+    # Soporta: python -m app --config ... --out ... [--dry-run] [--strict]
+    #          python -m app run --config ... --out ... [--dry-run] [--strict]
+    sub = p.add_subparsers(dest="cmd")
 
-    # Parser raíz (sin subcomando)
-    parser.add_argument("--config", help="Path to config/queries.yml")
-    parser.add_argument("--out", help="Output directory")
-    parser.add_argument("--dry-run", action="store_true", help="Produce artifacts only (no emails)")
+    # flags comunes
+    p.add_argument("--config", default="config/queries.yml", help="Ruta a config/queries.yml")
+    p.add_argument("--out", default="out", help="Directorio de salida")
+    p.add_argument("--dry-run", action="store_true", help="No envía correos; solo genera artefactos")
+    p.add_argument("--strict", action="store_true", help="Falla si algún reporte falla (recomendado en nightly)")
 
-    # Subcomando 'run'
-    run_p = subparsers.add_parser("run", help="Run reports")
-    run_p.add_argument("--config", required=False, help="Path to config/queries.yml")
-    run_p.add_argument("--out", required=False, help="Output directory")
-    run_p.add_argument("--dry-run", action="store_true", help="Produce artifacts only (no emails)")
+    run_p = sub.add_parser("run", help="Ejecuta los reportes")
+    run_p.add_argument("--config", default="config/queries.yml")
+    run_p.add_argument("--out", default="out")
+    run_p.add_argument("--dry-run", action="store_true")
+    run_p.add_argument("--strict", action="store_true")
 
-    args, unknown = parser.parse_known_args()
-    if unknown:
-        print(f"[cli][warn] unrecognized args: {unknown}", file=sys.stderr)
+    args = p.parse_args()
 
-    # Normaliza parámetros si viene por raíz o por 'run'
-    cmd = args.command or "root"
-    cfg = getattr(args, "config", None)
-    out_dir = getattr(args, "out", None)
+    # Normaliza según si vino por raíz o subcomando
+    cfg = getattr(args, "config", "config/queries.yml")
+    out_dir = getattr(args, "out", "out")
     dry = getattr(args, "dry_run", False)
+    strict = getattr(args, "strict", False)
 
-    # Defaults razonables si faltan (para que no falle silenciosamente)
-    if not cfg:
-        cfg = "config/queries.yml"
-    if not out_dir:
-        out_dir = "out"
-
-    try:
-        code = _do_run(cfg, out_dir, dry)
-    except Exception as e:
-        print(f"[cli][error] {e}", file=sys.stderr)
-        code = 1
+    code = run_reports(cfg, out_dir, dry, strict)
     sys.exit(code)
+
+if __name__ == "__main__":
+    main()
