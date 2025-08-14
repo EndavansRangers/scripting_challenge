@@ -1,0 +1,73 @@
+name: PR Preview - Reports
+
+on:
+  pull_request:
+    paths:
+      - "config/queries.yml"   # Solo se dispara si cambia el archivo de configuración
+  workflow_dispatch:           # Permite correrlo manualmente desde la UI
+
+# Permisos mínimos recomendados
+permissions:
+  contents: read
+
+# Cancela previews antiguos si llega un commit nuevo al mismo PR
+concurrency:
+  group: pr-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-preview:
+    name: Build (dry-run) and upload artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # como sugiere el runbook
+
+      - name: (Optional) Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run CLI in --dry-run (no emails)
+        run: |
+          python -m app run --config config/queries.yml --out out --dry-run
+
+      - name: Summarize results (items per report)
+        # Convierte out/summary.json a Markdown y lo publica en el Job Summary
+        run: |
+          python - << 'PY'
+          import json, pathlib, os
+          p = pathlib.Path("out/summary.json")
+          if not p.exists():
+              raise SystemExit("summary.json not found; did the CLI write outputs to out/?")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          lines = ["# Preview Summary", "", "| Report | Items |", "|---|---|"]
+          for row in data:
+              lines.append(f"| {row.get('report','?')} | {row.get('count','?')} |")
+          md = "\n".join(lines) + "\n"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write(md)
+          PY
+
+      - name: Upload artifacts (PDF/JSON/HTML/logs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            out/**
+          if-no-files-found: error
+          retention-days: 21   # política entre 14–30 días (ajústala a tu org)
