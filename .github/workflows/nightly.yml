@@ -5,8 +5,8 @@ on:
     - cron: "0 6 * * *"   # 06:00 UTC aprox; ajusta si necesitas otra hora
   workflow_dispatch:       # Permite correr manualmente
 
-permissions:
-  contents: read
+permissions: { contents: read }
+timeout-minutes: 15
 
 jobs:
   build-and-send:
@@ -45,6 +45,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Playwright browsers (Chromium)
+        run: |
+          python -m playwright install --with-deps chromium
+
       - name: Run CLI (real send)
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -54,9 +58,7 @@ jobs:
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
         run: |
           set -e
-          echo "Starting reports (real run)..."
-          python -m app run --config config/queries.yml --out out
-          echo "Reports completed."
+          python -m app run --config config/queries.yml --out out --strict
 
       - name: Summarize results
         run: |

@@ -1,3 +1,5 @@
-# requirements.txt (se fijan versiones mañana)
+requests
 pyyaml
 jinja2
+playwright
+python-dotenv
