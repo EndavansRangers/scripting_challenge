@@ -7,10 +7,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-
+from .script import load_config, fetch_artworks
 from .pdf import html_to_pdf
+from .emailer import send_email
 
-# Importa tu lógica real de datos
+
 from .script import load_config, fetch_artworks
 
 def render_html(template_dir: str, template_name: str, context: Dict[str, Any]) -> str:
@@ -51,6 +52,7 @@ def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> 
             search: str = r["search"]
             fields: List[str] = r["fields"]
             max_items: int = int(r["max_items"])
+            recipients: List[str] = r.get("recipients", []) or []
 
             print(f"[cli] fetching: name={name} q='{search}' fields={fields} max_items={max_items}")
             try:
@@ -60,13 +62,15 @@ def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> 
                 error_count += 1
                 continue
 
-            # 1) JSON real
+            # JSON real
             json_path = os.path.join(out_dir, f"{name}.json")
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(items, f, ensure_ascii=False, indent=2)
             print(f"[cli] wrote {json_path}")
 
-            # 2) HTML real (Jinja2) usando templates/report.html
+            # HTML real (Jinja2)
+            env = Environment(loader=FileSystemLoader("templates"), autoescape=select_autoescape(("html",)))
+            tpl = env.get_template("report.html")
             context = {
                 "report_name": name,
                 "search": search,
@@ -75,25 +79,45 @@ def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> 
                 "generated_at": datetime.utcnow().isoformat() + "Z",
                 "max_items": max_items,
             }
-            html = render_html(template_dir="templates", template_name="report.html", context=context)
+            html = tpl.render(**context)
             html_path = os.path.join(out_dir, f"{name}.html")
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html)
             print(f"[cli] wrote {html_path}")
 
-            # 3) PDF placeholder (mantiene el artefacto .pdf hasta integrar renderer real)
+            # PDF real (Playwright)
             pdf_path = os.path.join(out_dir, f"{name}.pdf")
             try:
-                # base_dir="templates" si tu HTML referencia CSS/IMG relativos
                 html_to_pdf(html=html, pdf_path=pdf_path, base_dir="templates")
                 print(f"[cli] wrote {pdf_path} (via Chromium)")
             except Exception as e:
-                # Fallback (para no romper preview si algo falla)
                 with open(pdf_path, "wb") as f:
                     f.write(b"%PDF-1.4\n% fallback placeholder\n%%EOF\n")
                 print(f"[cli][warn] PDF renderer failed, wrote placeholder instead: {e}")
 
             summary.append({"report": name, "count": len(items)})
+
+            # === ENVÍO DE EMAIL (solo si NO es dry-run) ===
+            if not dry_run:
+                try:
+                    subject = f"[Reports] {name} — {len(items)} items"
+                    body = (
+                        f"Reporte: {name}\n"
+                        f"Query: '{search}'\n"
+                        f"Items: {len(items)}\n"
+                        f"Generado: {context['generated_at']}\n\n"
+                        f"Se adjuntan PDF, HTML y JSON.\n"
+                    )
+                    attachments = [
+                        (f"{name}.pdf", pdf_path),
+                        (f"{name}.html", html_path),
+                        (f"{name}.json", json_path),
+                    ]
+                    send_email(subject=subject, body=body, to=recipients, attachments=attachments)
+                    print(f"[cli] email sent to: {', '.join(recipients) if recipients else '(sin destinatarios)'}")
+                except Exception as e:
+                    print(f"[error] Email '{name}': {e}", file=sys.stderr)
+                    error_count += 1
 
     # Resumen global para el Job Summary
     summary_path = os.path.join(out_dir, "summary.json")
@@ -105,7 +129,7 @@ def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> 
     # - preview (dry-run): no falles el build salvo errores “duros” (carga YAML).
     # - nightly strict: si strict=True y hubo errores de reportes, sal con código != 0
     if strict and error_count > 0:
-        print(f"[cli] strict mode: {error_count} errores en reports", file=sys.stderr)
+        print(f"[cli] strict mode: {error_count} errores (consulta/render/email)", file=sys.stderr)
         return 2
 
     return 0
