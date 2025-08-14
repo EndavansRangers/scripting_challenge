@@ -7,8 +7,8 @@ on:
   workflow_dispatch:           # Permite correrlo manualmente desde la UI
 
 # Permisos mínimos recomendados
-permissions:
-  contents: read
+permissions: { contents: read }
+timeout-minutes: 15
 
 # Cancela previews antiguos si llega un commit nuevo al mismo PR
 concurrency:

@@ -5,8 +5,8 @@ on:
     - cron: "0 6 * * *"   # 06:00 UTC aprox; ajusta si necesitas otra hora
   workflow_dispatch:       # Permite correr manualmente
 
-permissions:
-  contents: read
+permissions: { contents: read }
+timeout-minutes: 15
 
 jobs:
   build-and-send:
