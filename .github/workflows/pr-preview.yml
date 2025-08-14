@@ -8,7 +8,6 @@ on:
 
 # Permisos mínimos recomendados
 permissions: { contents: read }
-timeout-minutes: 15
 
 # Cancela previews antiguos si llega un commit nuevo al mismo PR
 concurrency:
@@ -19,6 +18,7 @@ jobs:
   build-preview:
     name: Build (dry-run) and upload artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 15   
 
     steps:
       - name: Checkout
@@ -28,7 +28,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"   # como sugiere el runbook
+          # TIP: podrías usar el cache integrado:
+          # cache: 'pip'
 
+      # (Opcional) Cache pip — puedes mantenerlo si prefieres este método
       - name: (Optional) Cache pip
         uses: actions/cache@v4
         with:
@@ -49,9 +52,9 @@ jobs:
       - name: Run CLI in --dry-run (no emails)
         run: |
           python -m app run --config config/queries.yml --out out --dry-run
+        
 
       - name: Summarize results (items per report)
-        # Convierte out/summary.json a Markdown y lo publica en el Job Summary
         run: |
           python - << 'PY'
           import json, pathlib, os
