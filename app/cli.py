@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .pdf import html_to_pdf
+
 # Importa tu lógica real de datos
 from .script import load_config, fetch_artworks
 
@@ -81,9 +83,15 @@ def run_reports(config_path: str, out_dir: str, dry_run: bool, strict: bool) -> 
 
             # 3) PDF placeholder (mantiene el artefacto .pdf hasta integrar renderer real)
             pdf_path = os.path.join(out_dir, f"{name}.pdf")
-            with open(pdf_path, "wb") as f:
-                f.write(b"%PDF-1.4\n% placeholder (render real pendiente)\n%%EOF\n")
-            print(f"[cli] wrote {pdf_path}")
+            try:
+                # base_dir="templates" si tu HTML referencia CSS/IMG relativos
+                html_to_pdf(html=html, pdf_path=pdf_path, base_dir="templates")
+                print(f"[cli] wrote {pdf_path} (via Chromium)")
+            except Exception as e:
+                # Fallback (para no romper preview si algo falla)
+                with open(pdf_path, "wb") as f:
+                    f.write(b"%PDF-1.4\n% fallback placeholder\n%%EOF\n")
+                print(f"[cli][warn] PDF renderer failed, wrote placeholder instead: {e}")
 
             summary.append({"report": name, "count": len(items)})
 
