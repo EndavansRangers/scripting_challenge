@@ -11,3 +11,9 @@ reports:
     fields: ["id", "title", "artist_title", "date_display"]
     max_items: 10
     recipients: ["stakeholders@example.com"]
+
+  - name: "modern-art"
+    search: "modern art"
+    fields: ["id", "title", "artist_title", "date_display"]
+    max_items: 15
+    recipients: ["art-team@example.com"]
