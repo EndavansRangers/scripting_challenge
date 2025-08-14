@@ -1,4 +1,3 @@
-# app/emailer.py
 import os
 import ssl
 import smtplib
@@ -8,6 +7,17 @@ from email.message import EmailMessage
 
 class EmailConfigError(Exception):
     pass
+
+
+# Cargar variables desde .env 
+try:
+    from dotenv import load_dotenv, find_dotenv
+    _env_path = find_dotenv(usecwd=True)
+    if _env_path:
+        load_dotenv(_env_path, override=False)  # no pisa variables ya exportadas
+except Exception:
+    pass
+
 
 def _load_smtp_config():
     host = os.environ.get("SMTP_HOST")

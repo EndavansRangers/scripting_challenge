@@ -4,7 +4,7 @@ reports:
     search: "war"
     fields: ["id", "title", "artist_title", "date_display"]
     max_items: 25
-    recipients: ["art-team@example.com"]
+    recipients: ["endavarangers@gmail.com"]
 
   - name: "impressionism-sample"
     search: "impressionism"
